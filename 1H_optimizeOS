@@ -1,0 +1,90 @@
+//@version=6
+strategy("Modified Alligator Strategy - Optimized for 1H", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// --- TIMEFRAME CHECK ---
+// Only allow this strategy to run on the 1-hour timeframe.
+//if timeframe.period != "60"
+//    runtime.error("This strategy only works on the 1-hour timeframe.")
+
+//INPUT
+jawLength     = input.int(13, "Jaw Length")
+teethLength   = input.int(8, "Teeth Length")
+lipsLength    = input.int(5, "Lips Length")
+
+jawOffset     = input.int(8, "Jaw Offset")
+teethOffset   = input.int(5, "Teeth Offset")
+lipsOffset    = input.int(3, "Lips Offset")
+asrc          = input(ohlc4, "Alligator Source")
+
+// Strategy specific inputs with optimized defaults based on BTC average movement research.
+useStopLoss    = input.bool(true, "Use Stop Loss")
+stopLossPerc   = input.float(0.5, "Stop Loss (%)", minval=0.1, step=0.1)     // Set to 0.5% based on research.
+useTakeProfit  = input.bool(true, "Use Take Profit")
+takeProfitPerc = input.float(2.0, "Take Profit (%)", minval=0.1, step=0.1)    // Set to 3% based on research.
+
+// === FUNCTIONS ===
+// SMMA function to calculate Alligator trend lines.
+// (Fixed to avoid ta.sma in conditionals)
+smma(src, length) =>
+    sma_val = ta.sma(src, length)
+    s = 0.0
+    s := na(s[1]) ? sma_val : ((s[1] * (length - 1)) + src) / length
+    s
+// === CALCULATIONS ===
+// Calculate offsetted Alligator curves.
+jaw_   = smma(asrc, jawLength)
+teeth_ = smma(asrc, teethLength)
+lips_  = smma(asrc, lipsLength)
+
+// Re-align Alligator lines to current price action.
+jaw   = jaw_[jawOffset]
+teeth = teeth_[teethOffset]
+lips  = lips_[lipsOffset]
+
+// Determine candle color.
+green_candle = close > open
+black_candle = close < open
+
+// === SIGNAL LOGIC ===
+// Define crossing conditions.
+lips_cross_above_teeth = ta.crossover(lips, teeth)
+lips_cross_below_teeth = ta.crossunder(lips, teeth)
+
+// Sell condition
+// 1. Black candle closing below the lips.
+// 2. Confirmed when lips cross below teeth and the close is below the jaw.
+initial_sell_condition   = black_candle and close < lips
+confirm_sell_condition   = lips_cross_below_teeth and black_candle and close < jaw
+
+// Buy condition
+// 1. Green candle closing above the lips.
+// 2. Confirmed when lips cross above teeth and the close is above the jaw.
+initial_buy_condition    = green_candle and close > lips
+confirm_buy_condition    = lips_cross_above_teeth and green_candle and close > jaw
+
+// === PLOTTING ===
+// Plot the Alligator lines.
+plot(jaw_, "Jaw", color.blue, offset=jawOffset, linewidth=2)
+plot(teeth_, "Teeth", color.red, offset=teethOffset, linewidth=2)
+plot(lips_, "Lips", color.green, offset=lipsOffset, linewidth=2)
+
+// Plot signals on the chart.
+plotarrow(confirm_buy_condition ? 1 : na, title="Buy Signal Arrow", colorup=color.lime, maxheight=60)
+plotarrow(confirm_sell_condition ? -1 : na, title="Sell Signal Arrow", colordown=color.red, maxheight=60)
+
+// === STRATEGY EXECUTION ===
+// Entry conditions for both long and short positions.
+if confirm_buy_condition
+    strategy.entry("Long", strategy.long)
+if confirm_sell_condition
+    strategy.entry("Short", strategy.short)
+// === EXIT STRATEGY ===
+// Apply Stop Loss and Take Profit exits for both long and short positions.
+if useStopLoss
+    // For longs, stop loss is below the entry price; for shorts, above.
+    strategy.exit("SL Long", "Long", stop=strategy.position_avg_price * (1 - stopLossPerc / 100))
+    strategy.exit("SL Short", "Short", stop=strategy.position_avg_price * (1 + stopLossPerc / 100))
+if useTakeProfit
+    // For longs, take profit is above the entry price; for shorts, below.
+    strategy.exit("TP Long", "Long", limit=strategy.position_avg_price * (1 + takeProfitPerc / 100))
+    strategy.exit("TP Short", "Short", limit=strategy.position_avg_price * (1 - takeProfitPerc / 100))
